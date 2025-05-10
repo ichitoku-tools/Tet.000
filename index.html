@@ -1,0 +1,414 @@
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>テトリス完全版</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <style>
+    * {
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body.dark {
+  background: radial-gradient(ellipse at center, #0f0f0f 0%, #050505 100%);
+  background-size: cover;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  color: white;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  text-align: center;
+
+      background: #111;
+      color: white;
+    }
+
+    body.light {
+      background: #fdfaf6;
+      color: #333;
+    }
+
+    body.kuma {
+      background: #f8f1e9;
+      color: #5e3b2c;
+    }
+
+    canvas {
+      border: 2px solid #fff;
+      background: #000;
+      touch-action: none;
+    }
+
+    .buttons {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin: 20px 0 10px;
+  flex-wrap: wrap;
+
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      background: #444;
+      color: white;
+      font-size: 16px;
+      padding: 10px 15px;
+      border: none;
+      border-radius: 5px;
+      flex: 1 1 20%;
+      min-width: 60px;
+      touch-action: manipulation;
+    }
+
+    
+    .score {
+      font-size: 12px;
+      font-weight: normal;
+      color: #aaa;
+      line-height: 1.4;
+      text-align: center;
+      margin-top: 10px;
+    }
+
+    #score, #highScore {
+      font-size: 14px;
+      font-weight: bold;
+      color: #ccc;
+    }
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+
+      margin-top: 10px;
+      font-size: 22px;
+      font-weight: bold;
+      color: #FFD700;
+      text-shadow: 1px 1px 2px #000;
+    }
+
+    #highScore {
+      color: #ff69b4;
+    }
+
+    #startBtn, #muteBtn, #themeBtn {
+      margin-top: 10px;
+      font-size: 14px;
+      padding: 6px 12px;
+      background: #666;
+      color: white;
+      border: none;
+      border-radius: 6px;
+    }
+  
+    .control-bar {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 20px;
+      flex-wrap: wrap;
+    }
+
+    .control-bar button {
+      font-size: 14px;
+      padding: 8px 14px;
+      min-width: 100px;
+    }
+
+</style>
+</head>
+<body class="dark">
+  <canvas id="tetris" width="240" height="400"></canvas>
+  <div class="buttons">
+    <button 
+      ontouchstart="startAutoMove(-1)" 
+      ontouchend="stopAutoMove()" 
+      ontouchcancel="stopAutoMove()">←</button>
+    <button 
+      ontouchstart="playerDrop()">↓</button>
+    <button 
+      ontouchstart="startAutoMove(1)" 
+      ontouchend="stopAutoMove()" 
+      ontouchcancel="stopAutoMove()">→</button>
+    <button 
+      ontouchstart="playerRotate(1)">↻</button>
+  </div>
+  <div class="score">
+    SCORE: <span id="score">0</span><br>
+    HIGH SCORE: <span id="highScore">0</span>
+  </div>
+  
+  <div class="control-bar">
+    <button id="startBtn" onclick="startGame()">ゲーム開始</button>
+    <button id="muteBtn" onclick="toggleMute()">効果音OFF</button>
+    <button id="themeBtn" onclick="toggleTheme()">テーマ：ダーク</button>
+  </div>
+
+
+  <audio id="rotate-sound" src="rotate.mp3" preload="auto"></audio>
+  <audio id="drop-sound" src="drop.mp3" preload="auto"></audio>
+  <audio id="clear-sound" src="clear.mp3" preload="auto"></audio>
+  <audio id="enter-sound" src="enter.mp3" preload="auto"></audio>
+  <audio id="bgm" src="bgm.mp3" preload="auto" loop></audio>
+
+  <script>
+    const canvas = document.getElementById('tetris');
+    const context = canvas.getContext('2d');
+    context.scale(20, 20);
+
+    const scoreEl = document.getElementById('score');
+    let highScore = parseInt(localStorage.getItem('tetrisHighScore')) || 0;
+    let isMuted = false;
+    let currentTheme = 'dark';
+    let moveInterval = null;
+    let dropCounter = 0;
+    let dropInterval = 1000;
+    let lastTime = 0;
+    let gameStarted = false;
+
+    const colors = [
+  null,
+  '#2c2c2c', // Obsidian Black
+  '#3b3b3b', // Deep Charcoal
+  '#444444', // Shadow Gray
+  '#222222', // Void Gray
+  '#1a1a1a', // Core Obsidian
+  '#555555', // Reflective Gray
+  '#393939', // Rock Texture Gray
+];
+    const arena = createMatrix(12, 20);
+    const player = { pos: {x: 0, y: 0}, matrix: null, score: 0 };
+
+    function playSound(id) {
+      if (isMuted) return;
+      const sound = document.getElementById(id);
+      if (sound) {
+        sound.currentTime = 0;
+        sound.play();
+      }
+    }
+
+    function startAutoMove(dir) {
+      if (!gameStarted) return;
+      if (moveInterval) return;
+      playerMove(dir);
+      moveInterval = setInterval(() => playerMove(dir), 100);
+    }
+
+    function stopAutoMove() {
+      clearInterval(moveInterval);
+      moveInterval = null;
+    }
+
+    function toggleMute() {
+      isMuted = !isMuted;
+      document.getElementById('muteBtn').innerText = isMuted ? '効果音ON' : '効果音OFF';
+    }
+
+    function toggleTheme() {
+      const themes = ['dark', 'light', 'kuma'];
+      const next = themes[(themes.indexOf(currentTheme) + 1) % themes.length];
+      document.body.classList.remove(currentTheme);
+      document.body.classList.add(next);
+      currentTheme = next;
+      document.getElementById('themeBtn').innerText = 'テーマ：' + {
+        dark: 'ダーク',
+        light: 'ライト',
+        kuma: 'くま'
+      }[currentTheme];
+    }
+
+    function startGame() {
+      if (gameStarted) return;
+      playSound('enter-sound');
+      const bgm = document.getElementById('bgm');
+      if (bgm) bgm.play();
+      gameStarted = true;
+      playerReset();
+      update();
+      document.getElementById('startBtn').style.display = 'none';
+      document.getElementById('highScore').innerText = highScore;
+    }
+
+    function createMatrix(w, h) {
+      const matrix = [];
+      while (h--) matrix.push(new Array(w).fill(0));
+      return matrix;
+    }
+
+    function createPiece(type) {
+      const p = {
+        'T': [[0,0,0],[1,1,1],[0,1,0]],
+        'O': [[2,2],[2,2]],
+        'L': [[0,3,0],[0,3,0],[0,3,3]],
+        'J': [[0,4,0],[0,4,0],[4,4,0]],
+        'I': [[0,5,0,0],[0,5,0,0],[0,5,0,0],[0,5,0,0]],
+        'S': [[0,6,6],[6,6,0],[0,0,0]],
+        'Z': [[7,7,0],[0,7,7],[0,0,0]]
+      };
+      return p[type];
+    }
+
+    function drawMatrix(matrix, offset) {
+      matrix.forEach((row, y) => {
+        row.forEach((value, x) => {
+          if (value !== 0) {
+            context.fillStyle = colors[value];
+            context.fillRect(x + offset.x, y + offset.y, 1, 1);
+          }
+        });
+      });
+    }
+
+    function draw() {
+      context.fillStyle = '#000';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      drawMatrix(arena, {x: 0, y: 0});
+      drawMatrix(player.matrix, player.pos);
+    }
+
+    function merge(arena, player) {
+      player.matrix.forEach((row, y) => {
+        row.forEach((value, x) => {
+          if (value !== 0) {
+            arena[y + player.pos.y][x + player.pos.x] = value;
+          }
+        });
+      });
+    }
+
+    function collide(arena, player) {
+      const [m, o] = [player.matrix, player.pos];
+      for (let y = 0; y < m.length; ++y) {
+        for (let x = 0; x < m[y].length; ++x) {
+          if (m[y][x] !== 0 && (arena[y + o.y] && arena[y + o.y][x + o.x]) !== 0) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    function arenaSweep() {
+      let rowCount = 1;
+      outer: for (let y = arena.length - 1; y >= 0; --y) {
+        for (let x = 0; x < arena[y].length; ++x) {
+          if (arena[y][x] === 0) continue outer;
+        }
+        const row = arena.splice(y, 1)[0].fill(0);
+        arena.unshift(row);
+        ++y;
+        player.score += rowCount * 10;
+        rowCount *= 2;
+        playSound('clear-sound');
+      }
+    }
+
+    function updateScore() {
+      scoreEl.innerText = player.score;
+      if (player.score > highScore) {
+        highScore = player.score;
+        localStorage.setItem('tetrisHighScore', highScore);
+      }
+      document.getElementById('highScore').innerText = highScore;
+    }
+
+    function playerDrop() {
+      if (!gameStarted) return;
+      player.pos.y++;
+      if (collide(arena, player)) {
+        player.pos.y--;
+        merge(arena, player);
+        playerReset();
+        arenaSweep();
+        updateScore();
+      }
+      playSound('drop-sound');
+      dropCounter = 0;
+    }
+
+    function playerMove(dir) {
+      if (!gameStarted) return;
+      player.pos.x += dir;
+      if (collide(arena, player)) {
+        player.pos.x -= dir;
+      }
+    }
+
+    function playerRotate(dir) {
+      if (!gameStarted) return;
+      const pos = player.pos.x;
+      let offset = 1;
+      rotate(player.matrix, dir);
+      while (collide(arena, player)) {
+        player.pos.x += offset;
+        offset = -(offset + (offset > 0 ? 1 : -1));
+        if (offset > player.matrix[0].length) {
+          rotate(player.matrix, -dir);
+          player.pos.x = pos;
+          return;
+        }
+      }
+      playSound('rotate-sound');
+    }
+
+    function rotate(matrix, dir) {
+      for (let y = 0; y < matrix.length; ++y) {
+        for (let x = 0; x < y; ++x) {
+          [matrix[x][y], matrix[y][x]] = [matrix[y][x], matrix[x][y]];
+        }
+      }
+      if (dir > 0) matrix.forEach(row => row.reverse());
+      else matrix.reverse();
+    }
+
+    function playerReset() {
+      const pieces = 'TJLOSZI';
+      player.matrix = createPiece(pieces[Math.random() * pieces.length | 0]);
+      player.pos.y = 0;
+      player.pos.x = (arena[0].length / 2 | 0) - (player.matrix[0].length / 2 | 0);
+      if (collide(arena, player)) {
+        arena.forEach(row => row.fill(0));
+        player.score = 0;
+        updateScore();
+      }
+    }
+
+    document.addEventListener('keydown', e => {
+      if (!gameStarted) return;
+      if (e.key === 'ArrowLeft') playerMove(-1);
+      else if (e.key === 'ArrowRight') playerMove(1);
+      else if (e.key === 'ArrowDown') playerDrop();
+      else if (e.key === 'q') playerRotate(-1);
+      else if (e.key === 'w') playerRotate(1);
+    });
+
+    function update(time = 0) {
+      const deltaTime = time - lastTime;
+      lastTime = time;
+      dropCounter += deltaTime;
+      if (dropCounter > dropInterval) playerDrop();
+      draw();
+      requestAnimationFrame(update);
+    }
+
+    document.addEventListener('touchstart', () => {
+      const bgm = document.getElementById('bgm');
+      if (bgm && bgm.paused) bgm.play();
+    }, { once: true });
+  </script>
+</body>
+</html>
